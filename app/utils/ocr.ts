@@ -1,20 +1,33 @@
 import { Platform } from 'react-native';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 // Free tier: ocr.space — get your own free key at ocr.space/OCRAPI
-const OCR_API_KEY = 'helloworld';
+const OCR_API_KEY = 'K83681280088957';
+
+async function compressImage(uri: string): Promise<string> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 1200 } }],
+    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+  );
+  return result.uri;
+}
 
 export async function runOCR(imageUri: string): Promise<string> {
+  // Compress before sending — free tier has a 1MB limit
+  const compressed = await compressImage(imageUri);
+
   const formData = new FormData();
 
   if (Platform.OS === 'web') {
     // On web the picker returns a blob URL — fetch it and send the actual blob
-    const res = await fetch(imageUri);
+    const res = await fetch(compressed);
     const blob = await res.blob();
     formData.append('file', blob, 'receipt.jpg');
   } else {
     // On native (iOS/Android) send the file URI directly
     formData.append('file', {
-      uri: imageUri,
+      uri: compressed,
       type: 'image/jpeg',
       name: 'receipt.jpg',
     } as unknown as Blob);
