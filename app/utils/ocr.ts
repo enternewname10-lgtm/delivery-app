@@ -7,8 +7,8 @@ const OCR_API_KEY = 'K83681280088957';
 async function compressImage(uri: string): Promise<string> {
   const result = await ImageManipulator.manipulateAsync(
     uri,
-    [{ resize: { width: 1200 } }],
-    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+    [{ resize: { width: 2000 } }],
+    { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG }
   );
   return result.uri;
 }
@@ -36,6 +36,8 @@ export async function runOCR(imageUri: string): Promise<string> {
   formData.append('apikey', OCR_API_KEY);
   formData.append('language', 'eng');
   formData.append('isOverlayRequired', 'false');
+  formData.append('OCREngine', '2');  // engine 2 handles dense/small text better
+  formData.append('scale', 'true');   // upscale image before processing
 
   const response = await fetch('https://api.ocr.space/parse/image', {
     method: 'POST',

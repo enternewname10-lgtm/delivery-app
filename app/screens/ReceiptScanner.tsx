@@ -13,7 +13,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { runOCR } from '../utils/ocr';
-import { parseAddress, ParsedAddress } from '../utils/addressParser';
+import { parseAddresses, ParsedAddress } from '../utils/addressParser';
 import AddressCard from '../components/AddressCard';
 
 export default function ReceiptScanner() {
@@ -75,11 +75,11 @@ export default function ReceiptScanner() {
       try {
         const text = await runOCR(uris[i]);
         lastRawText = text;
-        const address = parseAddress(text);
-        if (address) {
-          found++;
+        const foundAddresses = parseAddresses(text);
+        if (foundAddresses.length > 0) {
+          found += foundAddresses.length;
           setAddresses((prev) => {
-            const next = [...prev, address];
+            const next = [...prev, ...foundAddresses];
             setLastAdded(next.length - 1);
             return next;
           });

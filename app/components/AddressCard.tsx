@@ -19,7 +19,7 @@ export default function AddressCard({ address, index, onRemove }: Props) {
       <View style={styles.info}>
         <Text style={styles.street}>{address.street}</Text>
         <Text style={styles.cityState}>
-          {address.city}, {address.state} {address.zip}
+          {address.city}, {address.state}{address.zip ? ` ${address.zip}` : ''}
         </Text>
       </View>
       {onRemove && (
