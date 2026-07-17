@@ -16,7 +16,11 @@ import { runOCR } from '../utils/ocr';
 import { parseAddresses, ParsedAddress } from '../utils/addressParser';
 import AddressCard from '../components/AddressCard';
 
-export default function ReceiptScanner() {
+interface Props {
+  onStartRoute: (addresses: ParsedAddress[]) => void;
+}
+
+export default function ReceiptScanner({ onStartRoute }: Props) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -205,7 +209,7 @@ export default function ReceiptScanner() {
                   />
                 </View>
               ))}
-              <TouchableOpacity style={styles.routeBtn}>
+              <TouchableOpacity style={styles.routeBtn} onPress={() => onStartRoute(addresses)}>
                 <Text style={styles.routeBtnText}>Start Route</Text>
               </TouchableOpacity>
             </>

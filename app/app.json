@@ -10,11 +10,12 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Used to scan delivery receipts",
-        "NSPhotoLibraryUsageDescription": "Used to upload receipt photos from your library"
+        "NSPhotoLibraryUsageDescription": "Used to upload receipt photos from your library",
+        "NSLocationWhenInUseUsageDescription": "Used to calculate the fastest delivery route from your current location"
       }
     },
     "android": {
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE"],
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
