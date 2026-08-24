@@ -97,75 +97,81 @@ export default function ReceiptScanner({ onStartRoute }: Props) {
     await processImages([uri]);
   }
 
-  // Standard sequential OCR — one call per URI
+  // OCR all URIs in parallel — much faster than sequential
   async function processImages(uris: string[]) {
     setProcessing(true);
     setDebugLines([]);
-    let totalFound = 0;
+    setImageUri(uris[0]);
+    setStatusText(uris.length > 1 ? `Scanning ${uris.length} photos…` : 'Reading receipt…');
+
+    const results = await Promise.allSettled(uris.map(u => runOCR(u)));
+
+    const allFound: ParsedAddress[] = [];
     const missed: string[] = [];
-
-    for (let i = 0; i < uris.length; i++) {
-      setImageUri(uris[i]);
-      setStatusText(uris.length > 1 ? `Reading receipt ${i + 1} of ${uris.length}…` : 'Reading receipt…');
-      try {
-        const text = await runOCR(uris[i]);
-        const found = parseAddresses(text);
-        if (found.length > 0) {
-          totalFound += found.length;
-          setAddresses((prev) => { const next = [...prev, ...found]; setLastAdded(next.length - 1); return next; });
-        } else {
-          missed.push(`Photo ${i + 1}: "${text.replace(/\n+/g, ' ').trim().slice(0, 100) || 'nothing'}"`);
-        }
-      } catch (e) {
-        missed.push(`Photo ${i + 1}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        const found = parseAddresses(r.value);
+        if (found.length > 0) allFound.push(...found);
+        else missed.push(`Photo ${i + 1}: "${r.value.replace(/\n+/g, ' ').trim().slice(0, 100) || 'nothing'}"`);
+      } else {
+        missed.push(`Photo ${i + 1}: ${r.reason instanceof Error ? r.reason.message : 'Unknown error'}`);
       }
-    }
+    });
 
+    if (allFound.length > 0) {
+      setAddresses(prev => { const next = [...prev, ...allFound]; setLastAdded(next.length - 1); return next; });
+    }
     setProcessing(false);
-    if (totalFound > 0) { setStatusText(`${totalFound} address${totalFound > 1 ? 'es' : ''} added`); setTimeout(() => setStatusText(''), 3000); }
+    if (allFound.length > 0) { setStatusText(`${allFound.length} address${allFound.length > 1 ? 'es' : ''} added`); setTimeout(() => setStatusText(''), 3000); }
     else setStatusText('');
     setDebugLines(missed);
   }
 
-  // Multi-receipt: crop image into N vertical strips, rotate each 90°, OCR each strip separately
+  // Multi-receipt: crop into N strips, then OCR all strips in parallel
   async function processMultiReceipt(uri: string, count: number) {
     setProcessing(true);
     setDebugLines([]);
-    let totalFound = 0;
-    const missed: string[] = [];
 
     const dims = await getImageDimensions(uri);
     const stripW = Math.floor(dims.width / count);
 
+    // Step 1: prepare strips (local, fast)
+    setStatusText(`Preparing ${count} strips…`);
+    const stripUris: string[] = [];
     for (let i = 0; i < count; i++) {
-      setStatusText(`Scanning receipt ${i + 1} of ${count}…`);
-      try {
-        const x = i * stripW;
-        const w = i === count - 1 ? dims.width - x : stripW;
-
-        const ctx = ImageManipulator.manipulate(uri);
-        ctx.crop({ originX: x, originY: 0, width: w, height: dims.height });
-        ctx.rotate(90); // receipts are sideways when photographed in portrait mode
-        const img = await ctx.renderAsync();
-        const stripped = await img.saveAsync({ compress: 0.75, format: SaveFormat.JPEG });
-        ctx.release();
-        img.release();
-
-        const text = await runOCRDirect(stripped.uri);
-        const found = parseAddresses(text);
-        if (found.length > 0) {
-          totalFound += found.length;
-          setAddresses((prev) => { const next = [...prev, ...found]; setLastAdded(next.length - 1); return next; });
-        } else {
-          missed.push(`Receipt ${i + 1}: "${text.replace(/\n+/g, ' ').trim().slice(0, 100) || 'nothing'}"`);
-        }
-      } catch (e) {
-        missed.push(`Receipt ${i + 1}: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      }
+      const x = i * stripW;
+      const w = i === count - 1 ? dims.width - x : stripW;
+      const ctx = ImageManipulator.manipulate(uri);
+      ctx.crop({ originX: x, originY: 0, width: w, height: dims.height });
+      ctx.rotate(90);
+      const img = await ctx.renderAsync();
+      const stripped = await img.saveAsync({ compress: 0.75, format: SaveFormat.JPEG });
+      ctx.release();
+      img.release();
+      stripUris.push(stripped.uri);
     }
 
+    // Step 2: OCR all strips at the same time
+    setStatusText(`Scanning ${count} receipts…`);
+    const results = await Promise.allSettled(stripUris.map(u => runOCRDirect(u)));
+
+    const allFound: ParsedAddress[] = [];
+    const missed: string[] = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        const found = parseAddresses(r.value);
+        if (found.length > 0) allFound.push(...found);
+        else missed.push(`Receipt ${i + 1}: "${r.value.replace(/\n+/g, ' ').trim().slice(0, 100) || 'nothing'}"`);
+      } else {
+        missed.push(`Receipt ${i + 1}: ${r.reason instanceof Error ? r.reason.message : 'Error'}`);
+      }
+    });
+
+    if (allFound.length > 0) {
+      setAddresses(prev => { const next = [...prev, ...allFound]; setLastAdded(next.length - 1); return next; });
+    }
     setProcessing(false);
-    if (totalFound > 0) { setStatusText(`${totalFound} address${totalFound > 1 ? 'es' : ''} added`); setTimeout(() => setStatusText(''), 3000); }
+    if (allFound.length > 0) { setStatusText(`${allFound.length} address${allFound.length > 1 ? 'es' : ''} added`); setTimeout(() => setStatusText(''), 3000); }
     else setStatusText('');
     setDebugLines(missed);
   }
