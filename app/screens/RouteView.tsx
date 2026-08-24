@@ -1,316 +1,403 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
-  ScrollView, SafeAreaView, Linking, Alert, Clipboard,
+  ScrollView, SafeAreaView, Linking, Platform,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { ParsedAddress } from '../utils/addressParser';
 import { geocodeAddress, LatLng } from '../utils/geocoding';
 import { optimizeRoute, RouteResult, kmToDisplay } from '../utils/routing';
+import RouteMap from '../components/RouteMap';
 
 interface Props {
   addresses: ParsedAddress[];
   onBack: () => void;
 }
 
-type Status = 'locating' | 'geocoding' | 'optimizing' | 'ready' | 'error';
+type StopStatus = 'pending' | 'active' | 'delivered';
 
-interface OrderedStop {
+interface Stop {
   address: ParsedAddress;
   coord: LatLng | null;
+  status: StopStatus;
 }
 
-function buildRoutePrompt(stops: OrderedStop[], hasGPS: boolean): string {
-  if (stops.length === 0) return '';
-  const from = hasGPS ? 'my current location' : stops[0].address.street + ', ' + stops[0].address.city;
-  const deliveries = (hasGPS ? stops : stops.slice(1))
-    .map((s, i) => {
-      const addr = `${s.address.street}, ${s.address.city}, ${s.address.state}${s.address.zip ? ' ' + s.address.zip : ''}`;
-      return i === 0 ? `take me to ${addr}` : `then ${addr}`;
-    })
-    .join(', ');
-  return `Starting from ${from}, ${deliveries}.`;
+const BLUE = '#2563EB';
+const GREEN = '#16A34A';
+
+function timeEst(km: number, stops: number): string {
+  const min = Math.round((km / 25) * 60 + stops * 3);
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 export default function RouteView({ addresses, onBack }: Props) {
-  const [status, setStatus] = useState<Status>('locating');
-  const [statusText, setStatusText] = useState('Getting your location...');
+  const [phase, setPhase] = useState<'locating' | 'geocoding' | 'optimizing' | 'ready' | 'error'>('locating');
+  const [phaseText, setPhaseText] = useState('Getting your location...');
   const [route, setRoute] = useState<RouteResult | null>(null);
-  const [stops, setStops] = useState<OrderedStop[]>([]);
-  const [hasGPS, setHasGPS] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [stops, setStops] = useState<Stop[]>([]);
+  const [gps, setGps] = useState<LatLng | null>(null);
+  const [started, setStarted] = useState(false);
+  const [curIdx, setCurIdx] = useState(0);
 
   useEffect(() => { buildRoute(); }, []);
 
   async function buildRoute() {
     try {
-      setStatus('locating');
-      setStatusText('Getting your location...');
-      let gps: LatLng | null = null;
+      setPhase('locating');
+      setPhaseText('Getting your location...');
+
+      let coord: LatLng | null = null;
       try {
-        const { status: perm } = await Location.requestForegroundPermissionsAsync();
-        if (perm === 'granted') {
+        if (Platform.OS !== 'web') {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            coord = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          }
+        } else {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          gps = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+          coord = { lat: loc.coords.latitude, lng: loc.coords.longitude };
         }
       } catch (_) {}
-      setHasGPS(!!gps);
+      setGps(coord);
 
-      setStatus('geocoding');
+      setPhase('geocoding');
       const coords: (LatLng | null)[] = [];
       for (let i = 0; i < addresses.length; i++) {
-        setStatusText(`Looking up address ${i + 1} of ${addresses.length}…`);
+        setPhaseText(`Looking up address ${i + 1} of ${addresses.length}...`);
         coords.push(await geocodeAddress(addresses[i].full));
       }
 
-      setStatus('optimizing');
-      setStatusText('Finding the fastest order…');
-      await new Promise((r) => setTimeout(r, 50));
+      setPhase('optimizing');
+      setPhaseText('Optimizing route...');
+      await new Promise(r => setTimeout(r, 50));
 
-      const geocodedIdx = coords.map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
-      const failedIdx = coords.map((c, i) => (c ? -1 : i)).filter((i) => i >= 0);
-      let ordered: OrderedStop[] = [];
+      const geocodedIdx = coords.map((c, i) => (c ? i : -1)).filter(i => i >= 0);
+      const failedIdx = coords.map((c, i) => (c ? -1 : i)).filter(i => i >= 0);
+      let ordered: Stop[] = [];
 
       if (geocodedIdx.length >= 2) {
-        const geocodedCoords = geocodedIdx.map((i) => coords[i] as LatLng);
-        const start = gps ?? geocodedCoords[0];
-        const stopsCoords = gps ? geocodedCoords : geocodedCoords.slice(1);
-        const stopsIdx = gps ? geocodedIdx : geocodedIdx.slice(1);
-        const result = optimizeRoute(start, stopsCoords);
-        setRoute(result);
-        const optimized: OrderedStop[] = gps
-          ? result.order.map((r) => ({ address: addresses[stopsIdx[r]], coord: stopsCoords[r] }))
+        const gc = geocodedIdx.map(i => coords[i] as LatLng);
+        const start = coord ?? gc[0];
+        const sc = coord ? gc : gc.slice(1);
+        const si = coord ? geocodedIdx : geocodedIdx.slice(1);
+        const r = optimizeRoute(start, sc);
+        setRoute(r);
+        const optimized: Stop[] = coord
+          ? r.order.map(o => ({ address: addresses[si[o]], coord: sc[o], status: 'pending' as StopStatus }))
           : [
-              { address: addresses[geocodedIdx[0]], coord: geocodedCoords[0] },
-              ...result.order.map((r) => ({ address: addresses[stopsIdx[r]], coord: stopsCoords[r] })),
+              { address: addresses[geocodedIdx[0]], coord: gc[0], status: 'pending' as StopStatus },
+              ...r.order.map(o => ({ address: addresses[si[o]], coord: sc[o], status: 'pending' as StopStatus })),
             ];
-        ordered = [...optimized, ...failedIdx.map((i) => ({ address: addresses[i], coord: null }))];
+        ordered = [...optimized, ...failedIdx.map(i => ({ address: addresses[i], coord: null, status: 'pending' as StopStatus }))];
       } else {
-        ordered = addresses.map((a, i) => ({ address: a, coord: coords[i] }));
+        ordered = addresses.map((a, i) => ({ address: a, coord: coords[i] ?? null, status: 'pending' as StopStatus }));
       }
 
       setStops(ordered);
-      setStatus('ready');
-    } catch (e) {
-      setStatus('error');
-      setStatusText('Something went wrong building the route.');
+      setPhase('ready');
+    } catch {
+      setPhase('error');
+      setPhaseText('Could not build route.');
     }
   }
 
-  function openInMaps() {
-    if (!stops.length) return;
-    const waypoints = stops.map((s) => encodeURIComponent(s.address.full)).join('/');
-    const url = `https://www.google.com/maps/dir/My+Location/${waypoints}`;
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Could not open Google Maps', 'Make sure Google Maps is installed.')
-    );
+  function begin() {
+    setStarted(true);
+    setCurIdx(0);
+    setStops(prev => prev.map((s, i) => ({ ...s, status: i === 0 ? 'active' : 'pending' })));
   }
 
-  function copyPrompt() {
-    const prompt = buildRoutePrompt(stops, hasGPS);
-    Clipboard.setString(prompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  function markDelivered() {
+    setStops(prev => prev.map((s, i) => {
+      if (i === curIdx) return { ...s, status: 'delivered' };
+      if (i === curIdx + 1) return { ...s, status: 'active' };
+      return s;
+    }));
+    setCurIdx(c => c + 1);
   }
 
-  const routePrompt = status === 'ready' ? buildRoutePrompt(stops, hasGPS) : '';
-  const failedCount = stops.filter((s) => s.coord === null).length;
-  const loading = status !== 'ready' && status !== 'error';
+  function navigateTo(stop: Stop) {
+    Linking.openURL(
+      `https://www.google.com/maps/dir/My+Location/${encodeURIComponent(stop.address.full)}`
+    ).catch(() => {});
+  }
+
+  function move(from: number, dir: -1 | 1) {
+    const to = from + dir;
+    if (to < 0 || to >= stops.length) return;
+    const next = [...stops];
+    [next[from], next[to]] = [next[to], next[from]];
+    setStops(next);
+  }
+
+  const doneCount = stops.filter(s => s.status === 'delivered').length;
+  const cur = started && curIdx < stops.length ? stops[curIdx] : null;
+  const allDone = started && stops.length > 0 && doneCount === stops.length;
+  const loading = phase !== 'ready' && phase !== 'error';
+
+  const mapStops = stops
+    .filter(s => s.coord !== null)
+    .map(s => ({ coord: s.coord as LatLng, label: s.address.street, status: s.status }));
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
-
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Route</Text>
-        </View>
-
-        {loading && (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#2563EB" />
-            <Text style={styles.loadingText}>{statusText}</Text>
-            <Text style={styles.loadingNote}>
-              {addresses.length} stop{addresses.length > 1 ? 's' : ''} — ~{addresses.length * 2 + 1}s
+    <SafeAreaView style={s.safe}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={onBack} style={s.back}>
+          <Text style={s.backT}>←</Text>
+        </TouchableOpacity>
+        <View>
+          <Text style={s.title}>Today's Route</Text>
+          {phase === 'ready' && (
+            <Text style={s.subtitle}>
+              {doneCount > 0 ? `${doneCount} of ${stops.length} done` : `${stops.length} stops`}
             </Text>
-          </View>
-        )}
+          )}
+        </View>
+      </View>
 
-        {status === 'error' && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{statusText}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={buildRoute}>
-              <Text style={styles.retryBtnText}>Try Again</Text>
+      {loading && (
+        <View style={s.center}>
+          <ActivityIndicator size="large" color={BLUE} />
+          <Text style={s.loadT}>{phaseText}</Text>
+        </View>
+      )}
+
+      {phase === 'error' && (
+        <View style={s.center}>
+          <Text style={s.errT}>{phaseText}</Text>
+          <TouchableOpacity onPress={buildRoute} style={s.retry}>
+            <Text style={s.retryT}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {phase === 'ready' && (
+        <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+
+          {/* Stats */}
+          <View style={s.stats}>
+            {[
+              { v: String(stops.length), l: 'deliveries' },
+              { v: route ? kmToDisplay(route.totalKm) : '—', l: 'distance' },
+              { v: route ? timeEst(route.totalKm, stops.length) : '—', l: 'est. time' },
+              { v: `${doneCount}/${stops.length}`, l: 'done', g: doneCount > 0 },
+            ].map(({ v, l, g }) => (
+              <View key={l} style={s.stat}>
+                <Text style={[s.statV, g && s.statG]}>{v}</Text>
+                <Text style={s.statL}>{l}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Map */}
+          {mapStops.length > 0 && (
+            <RouteMap stops={mapStops} startCoord={gps} />
+          )}
+
+          {/* Start button */}
+          {!started && (
+            <TouchableOpacity style={s.startBtn} onPress={begin}>
+              <Text style={s.startBtnT}>Start Route</Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {status === 'ready' && (
-          <>
-            {/* Route prompt card */}
-            <View style={styles.promptCard}>
-              <Text style={styles.promptLabel}>ROUTE SUMMARY</Text>
-              <Text style={styles.promptText}>{routePrompt}</Text>
-              <TouchableOpacity style={styles.copyBtn} onPress={copyPrompt}>
-                <Text style={styles.copyBtnText}>{copied ? 'Copied!' : 'Copy text'}</Text>
-              </TouchableOpacity>
+          {/* All done */}
+          {allDone && (
+            <View style={s.allDone}>
+              <Text style={s.allDoneT}>All deliveries complete</Text>
+              <Text style={s.allDoneS}>{stops.length} stops · {route ? kmToDisplay(route.totalKm) : ''}</Text>
             </View>
+          )}
 
-            {/* Distance summary */}
-            {route && (
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryChip}>
-                  <Text style={styles.summaryChipValue}>{kmToDisplay(route.totalKm)}</Text>
-                  <Text style={styles.summaryChipLabel}>total</Text>
+          {/* Next stop card */}
+          {started && !allDone && cur && (
+            <View style={s.next}>
+              <Text style={s.nextL}>Next stop  ·  {curIdx + 1} of {stops.length}</Text>
+              <Text style={s.nextStreet}>{cur.address.street}</Text>
+              <Text style={s.nextCity}>
+                {cur.address.city}, {cur.address.state}
+                {cur.address.zip ? ` ${cur.address.zip}` : ''}
+              </Text>
+              <View style={s.nextActs}>
+                <TouchableOpacity style={s.navBtn} onPress={() => navigateTo(cur)}>
+                  <Text style={s.navBtnT}>Navigate</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.doneBtn} onPress={markDelivered}>
+                  <Text style={s.doneBtnT}>Mark delivered</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Route list */}
+          <Text style={s.section}>Route</Text>
+
+          {stops.map((stop, i) => {
+            const done = stop.status === 'delivered';
+            const active = stop.status === 'active';
+            return (
+              <View key={i} style={[s.row, done && s.rowDone]}>
+                <View style={[s.num, done ? s.numDone : active ? s.numActive : s.numPending]}>
+                  <Text style={[s.numT, !done && !active && s.numTPending]}>
+                    {done ? '✓' : i + 1}
+                  </Text>
                 </View>
-                <View style={styles.summaryChip}>
-                  <Text style={styles.summaryChipValue}>{stops.length}</Text>
-                  <Text style={styles.summaryChipLabel}>stop{stops.length > 1 ? 's' : ''}</Text>
+                <View style={s.rowInfo}>
+                  <Text style={[s.rowStreet, done && s.rowStrike]}>{stop.address.street}</Text>
+                  <Text style={[s.rowCity, done && s.rowFaded]}>
+                    {stop.address.city}, {stop.address.state}
+                    {stop.address.zip ? ` ${stop.address.zip}` : ''}
+                  </Text>
                 </View>
-                {failedCount > 0 && (
-                  <View style={[styles.summaryChip, styles.summaryChipWarn]}>
-                    <Text style={styles.summaryChipValue}>{failedCount}</Text>
-                    <Text style={styles.summaryChipLabel}>unmapped</Text>
+                {!started && (
+                  <View style={s.arrows}>
+                    <TouchableOpacity onPress={() => move(i, -1)} style={s.arrow}>
+                      <Text style={s.arrowT}>↑</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => move(i, 1)} style={s.arrow}>
+                      <Text style={s.arrowT}>↓</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>
-            )}
+            );
+          })}
 
-            {/* Stop list */}
-            {stops.map((stop, i) => {
-              const failed = stop.coord === null;
-              const legDist =
-                route && !failed && route.legKm[i] != null && i > 0
-                  ? `+${kmToDisplay(route.legKm[i])}`
-                  : i === 0 ? 'First stop' : null;
-              return (
-                <View key={i} style={[styles.stopCard, failed && styles.stopCardFailed]}>
-                  <View style={[styles.badge, failed && styles.badgeFailed]}>
-                    <Text style={styles.badgeText}>{i + 1}</Text>
-                  </View>
-                  <View style={styles.stopInfo}>
-                    <Text style={styles.stopStreet}>{stop.address.street}</Text>
-                    <Text style={styles.stopCity}>
-                      {stop.address.city}, {stop.address.state}
-                      {stop.address.zip ? ` ${stop.address.zip}` : ''}
-                    </Text>
-                    {legDist && (
-                      <Text style={[styles.stopDist, failed && styles.stopDistWarn]}>
-                        {legDist}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              );
-            })}
-
-            <TouchableOpacity style={styles.mapsBtn} onPress={openInMaps}>
-              <Text style={styles.mapsBtnText}>Open in Google Maps</Text>
+          {/* Open all in Maps */}
+          {stops.length > 0 && (
+            <TouchableOpacity
+              style={s.mapsBtn}
+              onPress={() => {
+                const wp = stops.map(st => encodeURIComponent(st.address.full)).join('/');
+                Linking.openURL(`https://www.google.com/maps/dir/My+Location/${wp}`).catch(() => {});
+              }}
+            >
+              <Text style={s.mapsBtnT}>Open all in Google Maps</Text>
             </TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 20, paddingBottom: 40 },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 12 },
-  backBtn: { paddingVertical: 4, paddingRight: 8 },
-  backText: { color: '#2563EB', fontSize: 15, fontWeight: '600' },
-  title: { fontSize: 22, fontWeight: '700', color: '#1E3A5F' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#F8FAFC' },
 
-  loadingBox: { alignItems: 'center', paddingVertical: 48, gap: 14 },
-  loadingText: { fontSize: 16, fontWeight: '600', color: '#1E3A5F' },
-  loadingNote: { fontSize: 13, color: '#64748B' },
-
-  errorBox: { alignItems: 'center', paddingVertical: 32, gap: 16 },
-  errorText: { fontSize: 15, color: '#DC2626', textAlign: 'center' },
-  retryBtn: { backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 28 },
-  retryBtnText: { color: '#fff', fontWeight: '700' },
-
-  promptCard: {
-    backgroundColor: '#1E3A5F',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-  },
-  promptLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#93C5FD',
-    letterSpacing: 1.5,
-    marginBottom: 10,
-  },
-  promptText: {
-    fontSize: 16,
-    color: '#F0F9FF',
-    lineHeight: 26,
-    fontStyle: 'italic',
-  },
-  copyBtn: {
-    alignSelf: 'flex-end',
-    marginTop: 14,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-  },
-  copyBtnText: { color: '#BAE6FD', fontSize: 12, fontWeight: '600' },
-
-  summaryRow: {
+  header: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 14,
+    gap: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#fff',
   },
-  summaryChip: {
+  back: { padding: 4 },
+  backT: { fontSize: 22, color: BLUE },
+  title: { fontSize: 18, color: '#0F172A' },
+  subtitle: { fontSize: 12, color: '#94A3B8', marginTop: 1 },
+
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 },
+  loadT: { fontSize: 15, color: '#64748B', textAlign: 'center' },
+  errT: { fontSize: 15, color: '#DC2626', textAlign: 'center' },
+  retry: { backgroundColor: BLUE, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 24 },
+  retryT: { color: '#fff', fontSize: 14 },
+
+  scroll: { padding: 16, paddingBottom: 48, gap: 14 },
+
+  stats: { flexDirection: 'row', gap: 8 },
+  stat: {
     flex: 1,
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderRadius: 14,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  summaryChipWarn: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
-  summaryChipValue: { fontSize: 20, fontWeight: '800', color: '#1E3A5F' },
-  summaryChipLabel: { fontSize: 11, color: '#64748B', marginTop: 2 },
-
-  stopCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  stopCardFailed: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
-  badge: {
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: '#2563EB',
-    alignItems: 'center', justifyContent: 'center',
-    marginRight: 12, marginTop: 2,
+  statV: { fontSize: 17, color: '#0F172A', marginBottom: 2 },
+  statG: { color: GREEN },
+  statL: { fontSize: 10, color: '#94A3B8', letterSpacing: 0.5 },
+
+  startBtn: { backgroundColor: BLUE, borderRadius: 16, paddingVertical: 20, alignItems: 'center' },
+  startBtnT: { color: '#fff', fontSize: 18 },
+
+  allDone: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
   },
-  badgeFailed: { backgroundColor: '#D97706' },
-  badgeText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  stopInfo: { flex: 1 },
-  stopStreet: { fontSize: 15, fontWeight: '600', color: '#1E3A5F' },
-  stopCity: { fontSize: 13, color: '#64748B', marginTop: 2 },
-  stopDist: { fontSize: 12, color: '#2563EB', marginTop: 4, fontWeight: '600' },
-  stopDistWarn: { color: '#D97706' },
+  allDoneT: { fontSize: 18, color: GREEN, marginBottom: 4 },
+  allDoneS: { fontSize: 13, color: '#64748B' },
+
+  next: { backgroundColor: BLUE, borderRadius: 18, padding: 20 },
+  nextL: { fontSize: 11, color: 'rgba(255,255,255,0.6)', letterSpacing: 0.8, marginBottom: 10 },
+  nextStreet: { fontSize: 22, color: '#fff', marginBottom: 4 },
+  nextCity: { fontSize: 14, color: 'rgba(255,255,255,0.7)', marginBottom: 18 },
+  nextActs: { flexDirection: 'row', gap: 10 },
+  navBtn: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.4)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  navBtnT: { color: '#fff', fontSize: 15 },
+  doneBtn: { flex: 1, backgroundColor: GREEN, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  doneBtnT: { color: '#fff', fontSize: 15 },
+
+  section: { fontSize: 11, color: '#94A3B8', letterSpacing: 1, marginTop: 4 },
+
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 14,
+  },
+  rowDone: { opacity: 0.45 },
+  num: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  numPending: { backgroundColor: '#E2E8F0' },
+  numActive: { backgroundColor: BLUE },
+  numDone: { backgroundColor: GREEN },
+  numT: { fontSize: 13, color: '#fff' },
+  numTPending: { color: '#64748B' },
+  rowInfo: { flex: 1 },
+  rowStreet: { fontSize: 15, color: '#0F172A' },
+  rowCity: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  rowStrike: { textDecorationLine: 'line-through', color: '#94A3B8' },
+  rowFaded: { color: '#94A3B8' },
+
+  arrows: { flexDirection: 'row', gap: 4 },
+  arrow: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowT: { fontSize: 14, color: '#64748B' },
 
   mapsBtn: {
-    backgroundColor: '#16A34A',
     borderRadius: 14,
-    paddingVertical: 18,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#fff',
+    marginTop: 4,
   },
-  mapsBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  mapsBtnT: { color: '#0F172A', fontSize: 15 },
 });

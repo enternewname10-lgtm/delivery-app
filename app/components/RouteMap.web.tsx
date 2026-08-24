@@ -3,9 +3,17 @@ import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from 'react-
 import L from 'leaflet';
 import { LatLng } from '../utils/geocoding';
 
-function createNumberedIcon(n: number) {
+type StopStatus = 'pending' | 'active' | 'delivered';
+
+export interface RouteMapProps {
+  stops: Array<{ coord: LatLng; label: string; status: StopStatus }>;
+  startCoord?: LatLng | null;
+}
+
+function markerIcon(n: number | '✓', status: StopStatus) {
+  const bg = status === 'delivered' ? '#16A34A' : status === 'active' ? '#2563EB' : '#94A3B8';
   return L.divIcon({
-    html: `<div style="background:#2563EB;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35)">${n}</div>`,
+    html: `<div style="background:${bg};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.25)">${n}</div>`,
     className: '',
     iconSize: [28, 28],
     iconAnchor: [14, 28],
@@ -14,7 +22,7 @@ function createNumberedIcon(n: number) {
 }
 
 const startIcon = L.divIcon({
-  html: `<div style="background:#16A34A;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35)">YOU</div>`,
+  html: `<div style="background:#0F172A;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.25)">YOU</div>`,
   className: '',
   iconSize: [28, 28],
   iconAnchor: [14, 28],
@@ -23,20 +31,13 @@ const startIcon = L.divIcon({
 function BoundsFitter({ points }: { points: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
-    if (points.length > 0) {
-      map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
-    }
+    if (points.length > 1) map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+    else if (points.length === 1) map.setView(points[0], 14);
   }, [points, map]);
   return null;
 }
 
-export interface RouteMapProps {
-  stops: LatLng[];
-  stopLabels: string[];
-  startCoord?: LatLng | null;
-}
-
-export default function RouteMap({ stops, stopLabels, startCoord }: RouteMapProps) {
+export default function RouteMap({ stops, startCoord }: RouteMapProps) {
   useEffect(() => {
     if (document.querySelector('link[data-leaflet-css]')) return;
     const link = document.createElement('link');
@@ -50,38 +51,36 @@ export default function RouteMap({ stops, stopLabels, startCoord }: RouteMapProp
 
   const allPoints: [number, number][] = [
     ...(startCoord ? [[startCoord.lat, startCoord.lng] as [number, number]] : []),
-    ...stops.map((s) => [s.lat, s.lng] as [number, number]),
+    ...stops.map(s => [s.coord.lat, s.coord.lng] as [number, number]),
   ];
 
-  const polylinePoints: [number, number][] = allPoints;
+  const center: [number, number] = startCoord
+    ? [startCoord.lat, startCoord.lng]
+    : [stops[0].coord.lat, stops[0].coord.lng];
 
   return (
-    <MapContainer
-      center={[stops[0].lat, stops[0].lng]}
-      zoom={12}
-      style={{ height: 320, width: '100%', borderRadius: 14 }}
-      zoomControl
-    >
+    <MapContainer center={center} zoom={12} style={{ height: 220, width: '100%', borderRadius: 16 }} zoomControl={false}>
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
       />
       <BoundsFitter points={allPoints} />
-
       {startCoord && (
         <Marker position={[startCoord.lat, startCoord.lng]} icon={startIcon}>
           <Popup>Your location</Popup>
         </Marker>
       )}
-
       {stops.map((stop, i) => (
-        <Marker key={i} position={[stop.lat, stop.lng]} icon={createNumberedIcon(i + 1)}>
-          <Popup>{stopLabels[i] || `Stop ${i + 1}`}</Popup>
+        <Marker
+          key={i}
+          position={[stop.coord.lat, stop.coord.lng]}
+          icon={markerIcon(stop.status === 'delivered' ? '✓' : i + 1, stop.status)}
+        >
+          <Popup><b>{i + 1}.</b> {stop.label}</Popup>
         </Marker>
       ))}
-
-      {polylinePoints.length > 1 && (
-        <Polyline positions={polylinePoints} color="#2563EB" weight={4} opacity={0.8} />
+      {allPoints.length > 1 && (
+        <Polyline positions={allPoints} color="#2563EB" weight={3} opacity={0.7} dashArray="6 4" />
       )}
     </MapContainer>
   );

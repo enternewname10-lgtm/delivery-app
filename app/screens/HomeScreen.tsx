@@ -10,45 +10,34 @@ interface Props {
 export default function HomeScreen({ onStart }: Props) {
   return (
     <View style={styles.root}>
-      {/* City-sky gradient background */}
       <LinearGradient
-        colors={['#0B1A2E', '#1A3A6B', '#2E6CB0', '#5BA4CF', '#A8D4EC']}
+        colors={['#1A3A6B', '#A8D4EC']}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Blur layer over the gradient */}
-      <BlurView intensity={22} tint="light" style={StyleSheet.absoluteFill} />
+      <BlurView intensity={28} tint="light" style={StyleSheet.absoluteFill} />
 
-      {/* Light blue transparent overlay */}
-      <View
-        style={[StyleSheet.absoluteFill, styles.blueOverlay]}
-        pointerEvents="none"
-      />
+      <View style={[StyleSheet.absoluteFill, styles.blueOverlay]} pointerEvents="none" />
 
       <SafeAreaView style={styles.safe}>
         <View style={styles.brandArea}>
-          <Text style={styles.icon}>🚚</Text>
-          <Text style={styles.appName}>DLeivery</Text>
-          <Text style={styles.tagline}>Smart Delivery Route Optimizer</Text>
+          <Text style={styles.appName}>Delivery</Text>
+          <Text style={styles.tagline}>Route optimizer</Text>
         </View>
 
         <View style={styles.card}>
-          {[
-            { emoji: '📸', label: 'Scan receipts' },
-            { emoji: '🗺️', label: 'Optimize your route' },
-            { emoji: '📍', label: 'Navigate in Google Maps' },
-          ].map(({ emoji, label }) => (
-            <View key={label} style={styles.featureRow}>
-              <Text style={styles.featureEmoji}>{emoji}</Text>
-              <Text style={styles.featureText}>{label}</Text>
+          {['Scan receipts', 'Find the fastest route', 'Open in Google Maps'].map((item, i, arr) => (
+            <View key={item}>
+              <Text style={styles.cardItem}>{item}</Text>
+              {i < arr.length - 1 && <View style={styles.divider} />}
             </View>
           ))}
         </View>
 
-        <TouchableOpacity style={styles.startBtn} onPress={onStart} activeOpacity={0.85}>
-          <Text style={styles.startBtnText}>Start Deliveries  →</Text>
+        <TouchableOpacity style={styles.startBtn} onPress={onStart} activeOpacity={0.75}>
+          <Text style={styles.startBtnText}>Get started</Text>
         </TouchableOpacity>
 
         <Text style={styles.footer}>Scan · Optimize · Navigate</Text>
@@ -59,57 +48,73 @@ export default function HomeScreen({ onStart }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  blueOverlay: { backgroundColor: 'rgba(186, 225, 255, 0.32)' },
+  blueOverlay: { backgroundColor: 'rgba(186, 225, 255, 0.28)' },
   safe: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
+    paddingHorizontal: 32,
     gap: 28,
   },
   brandArea: { alignItems: 'center', gap: 8 },
-  icon: { fontSize: 68 },
   appName: {
-    fontSize: 52,
-    fontWeight: '900',
-    color: '#08182E',
-    letterSpacing: -1.5,
-    textShadowColor: 'rgba(255,255,255,0.4)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
+    fontFamily: 'Arial',
+    fontSize: 58,
+    fontWeight: 'normal',
+    color: '#0D1F3C',
+    letterSpacing: 1,
   },
   tagline: {
-    fontSize: 15,
-    color: '#1A3A6B',
-    fontWeight: '500',
-    textAlign: 'center',
-    opacity: 0.9,
+    fontFamily: 'Arial',
+    fontSize: 14,
+    fontWeight: 'normal',
+    color: '#2A4E7F',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
   card: {
     width: '100%',
-    backgroundColor: 'rgba(255,255,255,0.48)',
-    borderRadius: 22,
-    padding: 22,
-    gap: 14,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.7)',
+    borderColor: 'rgba(255,255,255,0.75)',
   },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  featureEmoji: { fontSize: 22 },
-  featureText: { fontSize: 16, color: '#0F2848', fontWeight: '600' },
+  cardItem: {
+    fontFamily: 'Arial',
+    fontSize: 15,
+    fontWeight: 'normal',
+    color: '#0D1F3C',
+    paddingVertical: 16,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(0,0,0,0.07)',
+  },
   startBtn: {
-    backgroundColor: '#1A3A6B',
-    borderRadius: 18,
-    paddingVertical: 19,
-    paddingHorizontal: 40,
+    borderWidth: 1.5,
+    borderColor: '#0D1F3C',
+    borderRadius: 14,
+    paddingVertical: 15,
     width: '100%',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 8,
+    backgroundColor: 'rgba(13,31,60,0.08)',
   },
-  startBtnText: { color: '#fff', fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
-  footer: { color: '#1A3A6B', fontSize: 12, opacity: 0.6, textAlign: 'center' },
+  startBtnText: {
+    fontFamily: 'Arial',
+    color: '#0D1F3C',
+    fontSize: 16,
+    fontWeight: 'normal',
+    letterSpacing: 0.5,
+  },
+  footer: {
+    fontFamily: 'Arial',
+    fontSize: 11,
+    fontWeight: 'normal',
+    color: '#2A4E7F',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    opacity: 0.6,
+  },
 });
